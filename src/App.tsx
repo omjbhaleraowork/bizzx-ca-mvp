@@ -25,7 +25,13 @@ import {
   useRef,
   useState,
 } from "react";
-import type { ChangeEvent, FormEvent } from "react";
+import type {
+  ChangeEvent,
+  FormEvent,
+  KeyboardEvent as ReactKeyboardEvent,
+  MouseEvent as ReactMouseEvent,
+  PointerEvent as ReactPointerEvent,
+} from "react";
 import {
   Link,
   NavLink,
@@ -38,6 +44,8 @@ import {
 } from "react-router-dom";
 import { categories, formatPrice, products } from "./data";
 import type { Product } from "./data";
+import { loadArtwork, saveArtwork } from "./artworkStorage";
+import { removeSampledBackground } from "./backgroundRemoval";
 
 type CartLine = {
   key: string;
@@ -52,6 +60,11 @@ type CartLine = {
   quantity: number;
   placement?: string;
   artworkName?: string;
+  artworkId?: string;
+  artworkX?: number;
+  artworkY?: number;
+  artworkScale?: number;
+  artworkRotation?: number;
 };
 
 const CART_KEY = "bizzx-cart-v1";
@@ -716,37 +729,17 @@ function ProductPage({ addToCart }: { addToCart: (line: Omit<CartLine, "key">) =
   const [colorIndex, setColorIndex] = useState(0);
   const [size, setSize] = useState("");
   const [quantity, setQuantity] = useState(1);
-  const [placement, setPlacement] = useState(placements[0]);
-  const [artworkName, setArtworkName] = useState("");
   const [error, setError] = useState("");
 
   useEffect(() => {
     setColorIndex(0);
     setSize("");
     setQuantity(1);
-    setArtworkName("");
     setError("");
   }, [slug]);
 
   if (!product) return <NotFound />;
   const selectedColor = product.colors[colorIndex] ?? product.colors[0];
-
-  const handleUpload = (event: ChangeEvent<HTMLInputElement>) => {
-    const file = event.target.files?.[0];
-    if (!file) return;
-    if (!["image/png", "image/jpeg"].includes(file.type)) {
-      setError("Choose a PNG or JPG image file.");
-      event.target.value = "";
-      return;
-    }
-    if (file.size > 2 * 1024 * 1024) {
-      setError("Artwork must be 2 MB or smaller for this preview.");
-      event.target.value = "";
-      return;
-    }
-    setError("");
-    setArtworkName(file.name);
-  };
 
   const addItem = () => {
     if (!size) {
@@ -764,8 +757,6 @@ function ProductPage({ addToCart }: { addToCart: (line: Omit<CartLine, "key">) =
       colorHex: selectedColor.hex,
       size,
       quantity,
-      placement: artworkName ? placement : undefined,
-      artworkName: artworkName || undefined,
     });
     navigate("/cart");
   };
@@ -781,6 +772,11 @@ function ProductPage({ addToCart }: { addToCart: (line: Omit<CartLine, "key">) =
         <div className="detail-gallery">
           <div className="detail-main-image">
             <img src={product.image} alt={product.name} />
+            <span
+              className="detail-color-wash"
+              style={{ backgroundColor: selectedColor.hex }}
+              aria-hidden="true"
+            />
             {product.tag && <span className="product-tag">{product.tag}</span>}
             <span className="gallery-label">BX—STUDIO / MOCK PRODUCT IMAGE</span>
           </div>
@@ -835,34 +831,9 @@ function ProductPage({ addToCart }: { addToCart: (line: Omit<CartLine, "key">) =
             </div>
           </div>
           <div className="option-block">
-            <label className="option-heading" htmlFor="product-artwork">
-              <span>Add artwork (optional)</span>
-              <span className="subtle-copy">PNG or JPG · 2 MB max</span>
-            </label>
-            <label className="upload-compact" htmlFor="product-artwork">
-              <Upload size={15} aria-hidden="true" />
-              <span>{artworkName || "Upload your artwork"}</span>
-              <input
-                key={product.id}
-                id="product-artwork"
-                type="file"
-                accept="image/png,image/jpeg"
-                onChange={handleUpload}
-              />
-            </label>
-            {artworkName && (
-              <label className="placement-select">
-                <span>Print placement</span>
-                <select
-                  value={placement}
-                  onChange={(event) => setPlacement(event.target.value)}
-                >
-                  {placements.map((item) => (
-                    <option key={item}>{item}</option>
-                  ))}
-                </select>
-              </label>
-            )}
+            <Link className="text-link" to={`/create?product=${product.slug}`}>
+              Add and position artwork in the design studio <ArrowRight size={15} aria-hidden="true" />
+            </Link>
           </div>
           <div className="quantity-row">
             <span>Quantity</span>
@@ -916,10 +887,29 @@ function CreatePage({ addToCart }: { addToCart: (line: Omit<CartLine, "key">) =>
   const [colorIndex, setColorIndex] = useState(0);
   const [size, setSize] = useState("");
   const [placement, setPlacement] = useState(placements[0]);
-  const [artwork, setArtwork] = useState<{ name: string; url: string } | null>(null);
+  const [artwork, setArtwork] = useState<{
+    id: string;
+    sourceId: string;
+    name: string;
+    url: string;
+    source: Blob;
+    backgroundRemoved: boolean;
+  } | null>(null);
   const [error, setError] = useState("");
   const [scale, setScale] = useState(30);
+  const [rotation, setRotation] = useState(0);
+  const [position, setPosition] = useState({ x: 50, y: 37 });
+  const [backgroundSample, setBackgroundSample] = useState<{
+    x: number;
+    y: number;
+    color: string;
+  } | null>(null);
+  const [samplingBackground, setSamplingBackground] = useState(false);
+  const [backgroundTolerance, setBackgroundTolerance] = useState(32);
+  const [processingBackground, setProcessingBackground] = useState(false);
   const fileInputRef = useRef<HTMLInputElement>(null);
+  const previewStageRef = useRef<HTMLDivElement>(null);
+  const dragOffset = useRef<{ pointerId: number; x: number; y: number } | null>(null);
   const navigate = useNavigate();
   const selectedColor = product.colors[colorIndex] ?? product.colors[0];
 
@@ -930,6 +920,11 @@ function CreatePage({ addToCart }: { addToCart: (line: Omit<CartLine, "key">) =>
     setColorIndex(0);
     setSize("");
     setArtwork(null);
+    setPosition({ x: 50, y: 37 });
+    setScale(30);
+    setRotation(0);
+    setBackgroundSample(null);
+    setSamplingBackground(false);
   }, [searchParams]);
 
   useEffect(() => {
@@ -938,7 +933,7 @@ function CreatePage({ addToCart }: { addToCart: (line: Omit<CartLine, "key">) =>
     };
   }, [artwork]);
 
-  const handleUpload = (event: ChangeEvent<HTMLInputElement>) => {
+  const handleUpload = async (event: ChangeEvent<HTMLInputElement>) => {
     const file = event.target.files?.[0];
     if (!file) return;
     if (!["image/png", "image/jpeg"].includes(file.type)) {
@@ -951,11 +946,160 @@ function CreatePage({ addToCart }: { addToCart: (line: Omit<CartLine, "key">) =>
       event.target.value = "";
       return;
     }
-    setError("");
-    setArtwork((current) => {
-      if (current) URL.revokeObjectURL(current.url);
-      return { name: file.name, url: URL.createObjectURL(file) };
+    try {
+      const id = await saveArtwork(file);
+      setError("");
+      setArtwork({
+        id,
+        sourceId: id,
+        name: file.name,
+        url: URL.createObjectURL(file),
+        source: file,
+        backgroundRemoved: false,
+      });
+      setPosition({ x: 50, y: 37 });
+      setScale(30);
+      setRotation(0);
+      setBackgroundSample(null);
+    } catch {
+      setError("Artwork could not be saved in this browser. Please try another file.");
+    }
+  };
+
+  const sampleBackground = (event: ReactMouseEvent<HTMLImageElement>) => {
+    if (!samplingBackground) return;
+    const image = event.currentTarget;
+    const bounds = image.getBoundingClientRect();
+    const fitScale = Math.min(
+      bounds.width / image.naturalWidth,
+      bounds.height / image.naturalHeight,
+    );
+    const imageWidth = image.naturalWidth * fitScale;
+    const imageHeight = image.naturalHeight * fitScale;
+    const offsetX = (bounds.width - imageWidth) / 2;
+    const offsetY = (bounds.height - imageHeight) / 2;
+    const x = (event.clientX - bounds.left - offsetX) / imageWidth;
+    const y = (event.clientY - bounds.top - offsetY) / imageHeight;
+
+    if (x < 0 || x > 1 || y < 0 || y > 1) return;
+
+    const canvas = document.createElement("canvas");
+    canvas.width = 1;
+    canvas.height = 1;
+    const context = canvas.getContext("2d", { willReadFrequently: true });
+    if (!context) {
+      setError("Could not read the selected background color.");
+      return;
+    }
+
+    context.drawImage(
+      image,
+      x * image.naturalWidth,
+      y * image.naturalHeight,
+      1,
+      1,
+      0,
+      0,
+      1,
+      1,
+    );
+    const [red, green, blue] = context.getImageData(0, 0, 1, 1).data;
+    setBackgroundSample({
+      x,
+      y,
+      color: `rgb(${red}, ${green}, ${blue})`,
     });
+    setSamplingBackground(false);
+    setError("");
+  };
+
+  const handleRemoveBackground = async () => {
+    if (!artwork || !backgroundSample) return;
+    setProcessingBackground(true);
+    setError("");
+
+    try {
+      const processed = await removeSampledBackground(
+        artwork.source,
+        backgroundSample.x,
+        backgroundSample.y,
+        backgroundTolerance,
+      );
+      const id = await saveArtwork(processed);
+      setArtwork((current) => current
+        ? {
+            ...current,
+            id,
+            url: URL.createObjectURL(processed),
+            backgroundRemoved: true,
+          }
+        : current);
+    } catch (cause) {
+      setError(
+        cause instanceof Error
+          ? cause.message
+          : "Could not remove the selected background. Please try again.",
+      );
+    } finally {
+      setProcessingBackground(false);
+    }
+  };
+
+  const restoreOriginalArtwork = () => {
+    setArtwork((current) => current
+      ? {
+          ...current,
+          id: current.sourceId,
+          url: URL.createObjectURL(current.source),
+          backgroundRemoved: false,
+        }
+      : current);
+    setBackgroundSample(null);
+  };
+
+  const startArtworkDrag = (event: ReactPointerEvent<HTMLDivElement>) => {
+    if (samplingBackground || !previewStageRef.current) return;
+    const bounds = previewStageRef.current.getBoundingClientRect();
+    dragOffset.current = {
+      pointerId: event.pointerId,
+      x: event.clientX - bounds.left - (position.x / 100) * bounds.width,
+      y: event.clientY - bounds.top - (position.y / 100) * bounds.height,
+    };
+    event.currentTarget.setPointerCapture(event.pointerId);
+  };
+
+  const moveArtwork = (event: ReactPointerEvent<HTMLDivElement>) => {
+    const drag = dragOffset.current;
+    const bounds = previewStageRef.current?.getBoundingClientRect();
+    if (!drag || drag.pointerId !== event.pointerId || !bounds) return;
+    setPosition({
+      x: Math.max(0, Math.min(100, ((event.clientX - bounds.left - drag.x) / bounds.width) * 100)),
+      y: Math.max(0, Math.min(100, ((event.clientY - bounds.top - drag.y) / bounds.height) * 100)),
+    });
+  };
+
+  const finishArtworkDrag = (event: ReactPointerEvent<HTMLDivElement>) => {
+    if (dragOffset.current?.pointerId === event.pointerId) dragOffset.current = null;
+    if (event.currentTarget.hasPointerCapture(event.pointerId)) {
+      event.currentTarget.releasePointerCapture(event.pointerId);
+    }
+  };
+
+  const nudgeArtwork = (event: ReactKeyboardEvent<HTMLDivElement>) => {
+    const amount = event.shiftKey ? 5 : 1;
+    const offsets: Record<string, { x: number; y: number }> = {
+      ArrowLeft: { x: -amount, y: 0 },
+      ArrowRight: { x: amount, y: 0 },
+      ArrowUp: { x: 0, y: -amount },
+      ArrowDown: { x: 0, y: amount },
+    };
+    const offset = offsets[event.key];
+    if (!offset) return;
+    event.preventDefault();
+    setPosition((current) => ({
+      x: Math.max(0, Math.min(100, current.x + offset.x)),
+      y: Math.max(0, Math.min(100, current.y + offset.y)),
+    }));
   };
 
   const addDesign = () => {
@@ -975,6 +1119,11 @@ function CreatePage({ addToCart }: { addToCart: (line: Omit<CartLine, "key">) =>
       quantity: 1,
       placement: artwork ? placement : undefined,
       artworkName: artwork?.name,
+      artworkId: artwork?.id,
+      artworkX: artwork ? position.x : undefined,
+      artworkY: artwork ? position.y : undefined,
+      artworkScale: artwork ? scale : undefined,
+      artworkRotation: artwork ? rotation : undefined,
     });
     navigate("/cart");
   };
@@ -992,7 +1141,7 @@ function CreatePage({ addToCart }: { addToCart: (line: Omit<CartLine, "key">) =>
             <span>LIVE MOCKUP <i /></span>
             <span>NOT A PRODUCTION PROOF</span>
           </div>
-          <div className="preview-stage">
+          <div className="preview-stage" ref={previewStageRef}>
             <img src={product.image} alt={`${product.name} front mockup`} />
             <div
               className="preview-color-wash"
@@ -1000,10 +1149,30 @@ function CreatePage({ addToCart }: { addToCart: (line: Omit<CartLine, "key">) =>
             />
             {artwork && (
               <div
-                className={`artwork-preview placement-${placements.indexOf(placement)}`}
-                style={{ width: `${scale}%` }}
+                className={`artwork-preview ${samplingBackground ? "sampling-background" : ""}`}
+                style={{
+                  width: `${scale}%`,
+                  left: `${position.x}%`,
+                  top: `${position.y}%`,
+                  transform: samplingBackground
+                    ? "translate(-50%, -50%)"
+                    : `translate(-50%, -50%) rotate(${rotation}deg)`,
+                }}
+                role="button"
+                tabIndex={0}
+                aria-label="Uploaded sticker. Drag to move it. Use arrow keys for precise placement."
+                onPointerDown={startArtworkDrag}
+                onPointerMove={moveArtwork}
+                onPointerUp={finishArtworkDrag}
+                onPointerCancel={finishArtworkDrag}
+                onKeyDown={nudgeArtwork}
               >
-                <img src={artwork.url} alt="Uploaded artwork preview" />
+                <img
+                  src={artwork.url}
+                  alt="Uploaded artwork preview"
+                  draggable={false}
+                  onClick={sampleBackground}
+                />
               </div>
             )}
             <div className="preview-caption">
@@ -1035,6 +1204,12 @@ function CreatePage({ addToCart }: { addToCart: (line: Omit<CartLine, "key">) =>
                       setProduct(nextProduct);
                       setColorIndex(0);
                       setSize("");
+                      setArtwork(null);
+                      setPosition({ x: 50, y: 37 });
+                      setScale(30);
+                      setRotation(0);
+                      setBackgroundSample(null);
+                      setSamplingBackground(false);
                     }
                   }}
                 >
@@ -1115,6 +1290,8 @@ function CreatePage({ addToCart }: { addToCart: (line: Omit<CartLine, "key">) =>
                     onClick={() => {
                       setArtwork(null);
                       if (fileInputRef.current) fileInputRef.current.value = "";
+                      setBackgroundSample(null);
+                      setSamplingBackground(false);
                     }}
                     aria-label="Remove artwork"
                   >
@@ -1140,7 +1317,13 @@ function CreatePage({ addToCart }: { addToCart: (line: Omit<CartLine, "key">) =>
                 <span>Print placement</span>
                 <select
                   value={placement}
-                  onChange={(event) => setPlacement(event.target.value)}
+                  onChange={(event) => {
+                    const nextPlacement = event.target.value;
+                    setPlacement(nextPlacement);
+                    setPosition(nextPlacement === placements[1]
+                      ? { x: 58, y: 31 }
+                      : { x: 50, y: 37 });
+                  }}
                 >
                   {placements.map((item) => (
                     <option key={item}>{item}</option>
@@ -1157,6 +1340,90 @@ function CreatePage({ addToCart }: { addToCart: (line: Omit<CartLine, "key">) =>
                   onChange={(event) => setScale(Number(event.target.value))}
                 />
               </label>
+              <label>
+                <span>Horizontal position <strong>{Math.round(position.x)}%</strong></span>
+                <input
+                  type="range"
+                  min="0"
+                  max="100"
+                  value={position.x}
+                  onChange={(event) =>
+                    setPosition((current) => ({ ...current, x: Number(event.target.value) }))
+                  }
+                />
+              </label>
+              <label>
+                <span>Vertical position <strong>{Math.round(position.y)}%</strong></span>
+                <input
+                  type="range"
+                  min="0"
+                  max="100"
+                  value={position.y}
+                  onChange={(event) =>
+                    setPosition((current) => ({ ...current, y: Number(event.target.value) }))
+                  }
+                />
+              </label>
+              <label>
+                <span>Rotation <strong>{rotation}°</strong></span>
+                <input
+                  type="range"
+                  min="-180"
+                  max="180"
+                  value={rotation}
+                  onChange={(event) => setRotation(Number(event.target.value))}
+                />
+              </label>
+              <div className="background-removal">
+                <p>Remove a plain background</p>
+                <button
+                  className="button button-dark"
+                  type="button"
+                  onClick={() => {
+                    setSamplingBackground(true);
+                    setError("");
+                  }}
+                  aria-pressed={samplingBackground}
+                >
+                  {samplingBackground ? "Click the background in the preview" : "Pick background color"}
+                </button>
+                {backgroundSample && (
+                  <>
+                    <span className="sampled-background-color">
+                      <i style={{ backgroundColor: backgroundSample.color }} />
+                      Selected background
+                    </span>
+                    <label>
+                      <span>Removal strength <strong>{backgroundTolerance}</strong></span>
+                      <input
+                        type="range"
+                        min="0"
+                        max="150"
+                        value={backgroundTolerance}
+                        onChange={(event) => setBackgroundTolerance(Number(event.target.value))}
+                      />
+                    </label>
+                    <button
+                      className="button button-lime"
+                      type="button"
+                      onClick={handleRemoveBackground}
+                      disabled={processingBackground}
+                    >
+                      {processingBackground ? "Removing background…" : "Remove background"}
+                    </button>
+                  </>
+                )}
+                {artwork.backgroundRemoved && (
+                  <button
+                    className="text-link"
+                    type="button"
+                    onClick={restoreOriginalArtwork}
+                  >
+                    Restore original image
+                  </button>
+                )}
+                <p>Best for solid backgrounds. Click the background area in your sticker preview.</p>
+              </div>
             </div>
           )}
           <div className="customizer-total">
@@ -1169,8 +1436,8 @@ function CreatePage({ addToCart }: { addToCart: (line: Omit<CartLine, "key">) =>
           </button>
           <p className="mockup-disclaimer">
             <CircleHelp size={14} aria-hidden="true" />
-            Your uploaded file stays in this browser. It is not stored or sent
-            to a production partner.
+            Artwork stays in this browser and is not sent to a production
+            partner.
           </p>
         </aside>
       </div>
@@ -1216,7 +1483,44 @@ function CartPage({
   updateQuantity: (key: string, quantity: number) => void;
   removeFromCart: (key: string) => void;
 }) {
+  const [artworkUrls, setArtworkUrls] = useState<Record<string, string>>({});
+  const [artworkLoadError, setArtworkLoadError] = useState(false);
   const subtotal = cart.reduce((total, item) => total + item.price * item.quantity, 0);
+
+  useEffect(() => {
+    let active = true;
+    const urls: string[] = [];
+
+    Promise.all(
+      cart.flatMap((item) =>
+        item.artworkId
+          ? [loadArtwork(item.artworkId).then((blob) => {
+              if (!active || !blob) return null;
+              const url = URL.createObjectURL(blob);
+              urls.push(url);
+              return [item.artworkId, url] as const;
+            })]
+          : [],
+      ),
+    ).then((entries) => {
+      if (active) {
+        setArtworkLoadError(false);
+        setArtworkUrls(Object.fromEntries(entries.filter(
+          (entry): entry is readonly [string, string] => entry !== null,
+        )));
+      }
+    }).catch(() => {
+      if (active) {
+        setArtworkUrls({});
+        setArtworkLoadError(true);
+      }
+    });
+
+    return () => {
+      active = false;
+      urls.forEach((url) => URL.revokeObjectURL(url));
+    };
+  }, [cart]);
 
   return (
     <main className="cart-page page-gutter">
@@ -1250,8 +1554,30 @@ function CartPage({
             </div>
             {cart.map((item) => (
               <article className="cart-item" key={item.key}>
-                <Link to={`/product/${item.slug}`} className="cart-item-image">
+                <Link
+                  to={`/product/${item.slug}`}
+                  className="cart-item-image"
+                  aria-label={`${item.name} in ${item.color}${item.artworkName ? ` with ${item.artworkName}` : ""}`}
+                >
                   <img src={item.image} alt={item.name} loading="lazy" />
+                  <span
+                    className="cart-item-color-wash"
+                    style={{ backgroundColor: item.colorHex }}
+                    aria-hidden="true"
+                  />
+                  {item.artworkId && artworkUrls[item.artworkId] && (
+                    <img
+                      className="cart-item-artwork"
+                      src={artworkUrls[item.artworkId]}
+                      alt=""
+                      style={{
+                        width: `${item.artworkScale ?? 30}%`,
+                        left: `${item.artworkX ?? (item.placement === placements[1] ? 58 : 50)}%`,
+                        top: `${item.artworkY ?? (item.placement === placements[1] ? 31 : 37)}%`,
+                        transform: `translate(-50%, -50%) rotate(${item.artworkRotation ?? 0}deg)`,
+                      }}
+                    />
+                  )}
                 </Link>
                 <div className="cart-item-details">
                   <p className="product-category">{item.name}</p>
@@ -1284,10 +1610,11 @@ function CartPage({
                 </strong>
               </article>
             ))}
-            <div className="cart-artwork-notice">
+            <div className={`cart-artwork-notice ${artworkLoadError ? "form-error" : ""}`}>
               <CircleHelp size={15} aria-hidden="true" />
-              Artwork names are attached to your items for this browser session,
-              but files aren&apos;t saved or sent anywhere.
+              {artworkLoadError
+                ? "A saved artwork preview could not be loaded. The file may have been cleared from this browser."
+                : "Artwork previews and color selections are saved in this browser only. They are mockups and are not sent to production."}
             </div>
           </div>
           <aside className="order-summary">
