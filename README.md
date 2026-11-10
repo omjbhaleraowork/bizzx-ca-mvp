@@ -11,6 +11,15 @@ npm run dev
 
 Create a production build with `npm run build`.
 
+## Deploy to GitHub Pages from a branch
+
+1. Run `npm run build` to generate the site in `docs`.
+2. Commit and push the generated `docs` folder to the `main` branch.
+3. In the repository settings, open **Pages**. Under **Build and deployment**, select **Deploy from a branch**, then choose `main` and `/docs`.
+4. Open `https://omjbhaleraowork.github.io/bizzx-ca-mvp/` after Pages finishes publishing.
+
+The app uses hash-based routes, so refresh URLs such as `/#/shop` rather than `/shop`.
+
 ## MVP boundaries
 
 - The catalog, imagery, and USD prices in `src/data.ts` are sample content and must be replaced with client-approved products and pricing.
