@@ -24,6 +24,7 @@ The app uses hash-based routes, so refresh URLs such as `/#/shop` rather than `/
 
 - The catalog, imagery, and USD prices in `src/data.ts` are sample content and must be replaced with client-approved products and pricing.
 - Product imagery is loaded from Unsplash.
+- Product color selection is not currently offered; previews use the catalog photo as-is.
 - The design studio accepts PNG/JPG files up to 2 MB. Click **Pick background color**, then click a plain background in the uploaded artwork, adjust removal strength, and choose **Remove background**. Drag the sticker on the preview or use the scale, position, and rotation controls. Artwork stays in browser storage and is not sent to a server or suitable as a production proof.
 - Checkout is intentionally unavailable. There is no backend, payment processing, customer account, order persistence, or admin area.
 - Replace contact details and confirm shipping, returns, product specifications, and business claims before launch.

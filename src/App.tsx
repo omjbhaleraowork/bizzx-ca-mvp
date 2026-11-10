@@ -2,7 +2,6 @@ import {
   ArrowDown,
   ArrowRight,
   ArrowUpRight,
-  Check,
   ChevronDown,
   ChevronRight,
   CircleHelp,
@@ -54,8 +53,6 @@ type CartLine = {
   name: string;
   image: string;
   price: number;
-  color: string;
-  colorHex: string;
   size: string;
   quantity: number;
   placement?: string;
@@ -65,10 +62,15 @@ type CartLine = {
   artworkY?: number;
   artworkScale?: number;
   artworkRotation?: number;
+  artworkSourceId?: string;
 };
 
 const CART_KEY = "bizzx-cart-v1";
 const placements = ["Front center", "Left chest"];
+
+function GarmentMockup({ image, name }: { image: string; name: string }) {
+  return <img className="garment-mockup" src={image} alt={name} />;
+}
 
 function readCart(): CartLine[] {
   try {
@@ -136,7 +138,7 @@ function App() {
 
   const addToCart = (line: Omit<CartLine, "key">) => {
     const artworkRef = line.artworkName ? crypto.randomUUID() : "";
-    const key = `${line.productId}-${line.color}-${line.size}-${line.placement ?? ""}-${artworkRef}`;
+    const key = `${line.productId}-${line.size}-${line.placement ?? ""}-${artworkRef}`;
     setCart((current) => {
       const existing = current.find((item) => item.key === key);
       if (existing) {
@@ -162,6 +164,14 @@ function App() {
     );
   };
 
+  const updateCartItem = (key: string, line: Omit<CartLine, "key">) => {
+    setCart((current) =>
+      current.map((item) => item.key === key ? { ...line, key, quantity: item.quantity } : item),
+    );
+    setCartNotice("Your custom design was updated.");
+    window.setTimeout(() => setCartNotice(""), 3200);
+  };
+
   const removeFromCart = (key: string) =>
     setCart((current) => current.filter((item) => item.key !== key));
 
@@ -181,7 +191,16 @@ function App() {
           path="/product/:slug"
           element={<ProductPage addToCart={addToCart} />}
         />
-        <Route path="/create" element={<CreatePage addToCart={addToCart} />} />
+        <Route
+          path="/create"
+          element={
+            <CreatePage
+              cart={cart}
+              addToCart={addToCart}
+              updateCartItem={updateCartItem}
+            />
+          }
+        />
         <Route
           path="/cart"
           element={
@@ -536,17 +555,6 @@ function ProductCard({
         </div>
         <span className="product-price">From {formatPrice(product.price)}</span>
       </div>
-      <div className="swatch-list" aria-label={`Colors for ${product.name}`}>
-        {product.colors.slice(0, 4).map((color) => (
-          <span
-            className="swatch"
-            key={color.name}
-            style={{ backgroundColor: color.hex }}
-            title={color.name}
-          />
-        ))}
-        <span className="swatch-count">{product.colors.length} colors</span>
-      </div>
     </article>
   );
 }
@@ -726,20 +734,17 @@ function ProductPage({ addToCart }: { addToCart: (line: Omit<CartLine, "key">) =
   const { slug } = useParams();
   const product = products.find((item) => item.slug === slug);
   const navigate = useNavigate();
-  const [colorIndex, setColorIndex] = useState(0);
   const [size, setSize] = useState("");
   const [quantity, setQuantity] = useState(1);
   const [error, setError] = useState("");
 
   useEffect(() => {
-    setColorIndex(0);
     setSize("");
     setQuantity(1);
     setError("");
   }, [slug]);
 
   if (!product) return <NotFound />;
-  const selectedColor = product.colors[colorIndex] ?? product.colors[0];
 
   const addItem = () => {
     if (!size) {
@@ -753,8 +758,6 @@ function ProductPage({ addToCart }: { addToCart: (line: Omit<CartLine, "key">) =
       name: product.name,
       image: product.image,
       price: product.price,
-      color: selectedColor.name,
-      colorHex: selectedColor.hex,
       size,
       quantity,
     });
@@ -771,12 +774,7 @@ function ProductPage({ addToCart }: { addToCart: (line: Omit<CartLine, "key">) =
       <div className="detail-layout">
         <div className="detail-gallery">
           <div className="detail-main-image">
-            <img src={product.image} alt={product.name} />
-            <span
-              className="detail-color-wash"
-              style={{ backgroundColor: selectedColor.hex }}
-              aria-hidden="true"
-            />
+            <GarmentMockup image={product.image} name={product.name} />
             {product.tag && <span className="product-tag">{product.tag}</span>}
             <span className="gallery-label">BX—STUDIO / MOCK PRODUCT IMAGE</span>
           </div>
@@ -787,28 +785,6 @@ function ProductPage({ addToCart }: { addToCart: (line: Omit<CartLine, "key">) =
           <p className="detail-price">{formatPrice(product.price)}</p>
           <p className="detail-description">{product.description}</p>
           <div className="detail-rule" />
-          <div className="option-block">
-            <div className="option-heading">
-              <span>Color</span>
-              <span>{selectedColor.name}</span>
-            </div>
-            <div className="color-options">
-              {product.colors.map((color, index) => (
-                <button
-                  type="button"
-                  className={`color-option ${colorIndex === index ? "selected" : ""}`}
-                  style={{ backgroundColor: color.hex }}
-                  key={color.name}
-                  title={color.name}
-                  aria-label={color.name}
-                  aria-pressed={colorIndex === index}
-                  onClick={() => setColorIndex(index)}
-                >
-                  {colorIndex === index && <Check size={14} aria-hidden="true" />}
-                </button>
-              ))}
-            </div>
-          </div>
           <div className="option-block">
             <div className="option-heading">
               <span>Size</span>
@@ -879,12 +855,21 @@ function ProductPage({ addToCart }: { addToCart: (line: Omit<CartLine, "key">) =
   );
 }
 
-function CreatePage({ addToCart }: { addToCart: (line: Omit<CartLine, "key">) => void }) {
+function CreatePage({
+  cart,
+  addToCart,
+  updateCartItem,
+}: {
+  cart: CartLine[];
+  addToCart: (line: Omit<CartLine, "key">) => void;
+  updateCartItem: (key: string, line: Omit<CartLine, "key">) => void;
+}) {
   const [searchParams] = useSearchParams();
+  const editKey = searchParams.get("edit");
+  const productSlug = searchParams.get("product");
   const initialProduct =
-    products.find((item) => item.slug === searchParams.get("product")) ?? products[0];
+    products.find((item) => item.slug === productSlug) ?? products[0];
   const [product, setProduct] = useState(initialProduct);
-  const [colorIndex, setColorIndex] = useState(0);
   const [size, setSize] = useState("");
   const [placement, setPlacement] = useState(placements[0]);
   const [artwork, setArtwork] = useState<{
@@ -911,21 +896,53 @@ function CreatePage({ addToCart }: { addToCart: (line: Omit<CartLine, "key">) =>
   const previewStageRef = useRef<HTMLDivElement>(null);
   const dragOffset = useRef<{ pointerId: number; x: number; y: number } | null>(null);
   const navigate = useNavigate();
-  const selectedColor = product.colors[colorIndex] ?? product.colors[0];
 
   useEffect(() => {
-    const matched =
-      products.find((item) => item.slug === searchParams.get("product")) ?? products[0];
+    let active = true;
+    const savedItem = editKey ? cart.find((item) => item.key === editKey) : undefined;
+    const matched = products.find(
+      (item) => item.slug === (savedItem?.slug ?? productSlug),
+    ) ?? products[0];
     setProduct(matched);
-    setColorIndex(0);
-    setSize("");
+    setSize(savedItem?.size ?? "");
     setArtwork(null);
-    setPosition({ x: 50, y: 37 });
-    setScale(30);
-    setRotation(0);
+    setPlacement(savedItem?.placement ?? placements[0]);
+    setPosition({
+      x: savedItem?.artworkX ?? (savedItem?.placement === placements[1] ? 58 : 50),
+      y: savedItem?.artworkY ?? (savedItem?.placement === placements[1] ? 31 : 37),
+    });
+    setScale(savedItem?.artworkScale ?? 30);
+    setRotation(savedItem?.artworkRotation ?? 0);
     setBackgroundSample(null);
     setSamplingBackground(false);
-  }, [searchParams]);
+
+    if (savedItem?.artworkId) {
+      Promise.all([
+        loadArtwork(savedItem.artworkId),
+        loadArtwork(savedItem.artworkSourceId ?? savedItem.artworkId),
+      ]).then(([savedImage, sourceImage]) => {
+        if (!active) return;
+        if (!savedImage || !sourceImage) {
+          setError("This saved artwork is no longer available in this browser.");
+          return;
+        }
+        setArtwork({
+          id: savedItem.artworkId!,
+          sourceId: savedItem.artworkSourceId ?? savedItem.artworkId!,
+          name: savedItem.artworkName ?? "Uploaded artwork",
+          url: URL.createObjectURL(savedImage),
+          source: sourceImage,
+          backgroundRemoved: savedItem.artworkId !== savedItem.artworkSourceId,
+        });
+      }).catch(() => {
+        if (active) setError("Could not load this design's saved artwork.");
+      });
+    }
+
+    return () => {
+      active = false;
+    };
+  }, [editKey, productSlug]);
 
   useEffect(() => {
     return () => {
@@ -1107,14 +1124,12 @@ function CreatePage({ addToCart }: { addToCart: (line: Omit<CartLine, "key">) =>
       setError("Choose a size before adding this design to your bag.");
       return;
     }
-    addToCart({
+    const updatedLine: Omit<CartLine, "key"> = {
       productId: product.id,
       slug: product.slug,
       name: product.name,
       image: product.image,
       price: product.price,
-      color: selectedColor.name,
-      colorHex: selectedColor.hex,
       size,
       quantity: 1,
       placement: artwork ? placement : undefined,
@@ -1124,7 +1139,13 @@ function CreatePage({ addToCart }: { addToCart: (line: Omit<CartLine, "key">) =>
       artworkY: artwork ? position.y : undefined,
       artworkScale: artwork ? scale : undefined,
       artworkRotation: artwork ? rotation : undefined,
-    });
+      artworkSourceId: artwork?.sourceId,
+    };
+    if (editKey && cart.some((item) => item.key === editKey)) {
+      updateCartItem(editKey, updatedLine);
+    } else {
+      addToCart(updatedLine);
+    }
     navigate("/cart");
   };
 
@@ -1142,11 +1163,7 @@ function CreatePage({ addToCart }: { addToCart: (line: Omit<CartLine, "key">) =>
             <span>NOT A PRODUCTION PROOF</span>
           </div>
           <div className="preview-stage" ref={previewStageRef}>
-            <img src={product.image} alt={`${product.name} front mockup`} />
-            <div
-              className="preview-color-wash"
-              style={{ backgroundColor: selectedColor.hex }}
-            />
+            <GarmentMockup image={product.image} name={product.name} />
             {artwork && (
               <div
                 className={`artwork-preview ${samplingBackground ? "sampling-background" : ""}`}
@@ -1202,7 +1219,6 @@ function CreatePage({ addToCart }: { addToCart: (line: Omit<CartLine, "key">) =>
                     );
                     if (nextProduct) {
                       setProduct(nextProduct);
-                      setColorIndex(0);
                       setSize("");
                       setArtwork(null);
                       setPosition({ x: 50, y: 37 });
@@ -1226,29 +1242,6 @@ function CreatePage({ addToCart }: { addToCart: (line: Omit<CartLine, "key">) =>
           <div className="customizer-step">
             <span className="customizer-step-number">02</span>
             <div className="customizer-options">
-              <h2>Pick a color</h2>
-              <div className="color-options">
-                {product.colors.map((color, index) => (
-                  <button
-                    type="button"
-                    className={`color-option ${colorIndex === index ? "selected" : ""}`}
-                    style={{ backgroundColor: color.hex }}
-                    key={color.name}
-                    title={color.name}
-                    aria-label={`Choose ${color.name}`}
-                    aria-pressed={colorIndex === index}
-                    onClick={() => setColorIndex(index)}
-                  >
-                    {colorIndex === index && <Check size={14} aria-hidden="true" />}
-                  </button>
-                ))}
-                <span className="selected-color-name">{selectedColor.name}</span>
-              </div>
-            </div>
-          </div>
-          <div className="customizer-step">
-            <span className="customizer-step-number">03</span>
-            <div className="customizer-options">
               <h2>Choose a size</h2>
               <div className="size-options compact-sizes">
                 {product.sizes.map((option) => (
@@ -1269,7 +1262,7 @@ function CreatePage({ addToCart }: { addToCart: (line: Omit<CartLine, "key">) =>
             </div>
           </div>
           <div className="customizer-step artwork-step">
-            <span className="customizer-step-number">04</span>
+            <span className="customizer-step-number">03</span>
             <div className="customizer-options">
               <h2>Add your artwork</h2>
               <p>PNG or JPG · Max 2 MB</p>
@@ -1555,16 +1548,11 @@ function CartPage({
             {cart.map((item) => (
               <article className="cart-item" key={item.key}>
                 <Link
-                  to={`/product/${item.slug}`}
+                  to={`/create?edit=${encodeURIComponent(item.key)}`}
                   className="cart-item-image"
-                  aria-label={`${item.name} in ${item.color}${item.artworkName ? ` with ${item.artworkName}` : ""}`}
+                  aria-label={`Edit ${item.name}${item.artworkName ? ` with ${item.artworkName}` : ""}`}
                 >
-                  <img src={item.image} alt={item.name} loading="lazy" />
-                  <span
-                    className="cart-item-color-wash"
-                    style={{ backgroundColor: item.colorHex }}
-                    aria-hidden="true"
-                  />
+                  <GarmentMockup image={item.image} name={item.name} />
                   {item.artworkId && artworkUrls[item.artworkId] && (
                     <img
                       className="cart-item-artwork"
@@ -1578,13 +1566,11 @@ function CartPage({
                       }}
                     />
                   )}
+                  <span className="cart-edit-label">Edit design</span>
                 </Link>
                 <div className="cart-item-details">
                   <p className="product-category">{item.name}</p>
-                  <span>
-                    <i className="cart-color-dot" style={{ backgroundColor: item.colorHex }} />
-                    {item.color} / Size {item.size}
-                  </span>
+                  <span>Size {item.size}</span>
                   {item.artworkName && (
                     <span className="cart-artwork">
                       <FileImage size={13} aria-hidden="true" />
@@ -1614,7 +1600,7 @@ function CartPage({
               <CircleHelp size={15} aria-hidden="true" />
               {artworkLoadError
                 ? "A saved artwork preview could not be loaded. The file may have been cleared from this browser."
-                : "Artwork previews and color selections are saved in this browser only. They are mockups and are not sent to production."}
+                : "Artwork previews are saved in this browser only. They are mockups and are not sent to production."}
             </div>
           </div>
           <aside className="order-summary">
