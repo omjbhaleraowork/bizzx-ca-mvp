@@ -1,2 +1,20 @@
-# bizzx-ca-mvp
-#Stage1 - MVP web platform for a custom clothing business. Customers pick a garment, personalize it with text, colors, and designs, preview the result, and place an order. Includes catalog, cart, checkout, and an admin panel for order management.
+# BizzX Apparel Storefront MVP
+
+A responsive, apparel-focused print-on-demand storefront built with Vite, React, and TypeScript. It includes a sample home page and catalog, product details, a browser-only artwork mockup studio, and a cart persisted in local storage.
+
+## Run locally
+
+```sh
+npm install
+npm run dev
+```
+
+Create a production build with `npm run build`.
+
+## MVP boundaries
+
+- The catalog, imagery, and USD prices in `src/data.ts` are sample content and must be replaced with client-approved products and pricing.
+- Product imagery is loaded from Unsplash.
+- Artwork accepts PNG/JPG files up to 2 MB for the browser mockup. The uploaded file is not sent to a server, persisted with the cart, or suitable as a production proof; only its filename and selected placement are attached to a cart line.
+- Checkout is intentionally unavailable. There is no backend, payment processing, customer account, order persistence, or admin area.
+- Replace contact details and confirm shipping, returns, product specifications, and business claims before launch.
